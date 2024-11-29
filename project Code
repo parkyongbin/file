@@ -1,0 +1,165 @@
+import tkinter as tk
+from tkinter import messagebox
+import serial
+import threading
+import time
+
+# 아두이노 연결 설정
+try:
+    arduino = serial.Serial(port='COM3', baudrate=9600, timeout=1)  # 포트를 환경에 맞게 설정
+except serial.SerialException:
+    arduino = None
+    messagebox.showerror("연결 오류", "아두이노를 찾을 수 없습니다!")
+
+# GUI 생성 (먼저 root 생성)
+root = tk.Tk()
+root.title("스마트홈 센서 및 제어")
+root.geometry("500x800")
+
+# 자동/수동 모드 상태
+lighting_mode = tk.StringVar(value="자동")  # 조명 모드
+motor_mode = tk.StringVar(value="자동")  # 모터 모드
+
+# 센서 데이터 수신 함수
+def read_from_arduino():
+    while True:
+        if arduino and arduino.in_waiting > 0:
+            data = arduino.readline().decode().strip()
+            print(f"수신된 데이터: {data}")  # 디버깅용 출력
+            if data.startswith("AMBIENT="):  # 실내 온도
+                indoor_temp_value.set(data.split("=")[1] + " °C")
+            elif data.startswith("HUMIDITY="):  # 실내 습도
+                indoor_humidity_value.set(data.split("=")[1] + " %")
+                update_motor(float(data.split("=")[1]))  # 습도에 따라 모터 상태 갱신
+            elif data.startswith("BRIGHT="):  # 조도 값
+                brightness_value.set(data.split("=")[1] + " lx")
+                update_lighting(int(data.split("=")[1]))  # 조도에 따라 조명 상태 갱신
+
+# 데이터 요청 함수 (0.5초마다 호출)
+def request_sensor_data():
+    while True:
+        if arduino:
+            try:
+                arduino.write("AMBIENT=?\n".encode())  # 실내 온도 요청
+                time.sleep(0.2)
+                arduino.write("HUMIDITY=?\n".encode())  # 실내 습도 요청
+                time.sleep(0.2)
+                arduino.write("BRIGHT=?\n".encode())  # 조도 요청
+                time.sleep(0.2)
+            except Exception as e:
+                print(f"전송 오류: {e}")
+
+# 조명 상태 업데이트
+def update_lighting(brightness):
+    if lighting_mode.get() == "자동":
+        if brightness < 368:
+            send_to_arduino("RGB=0,0,255")  # 파랑
+        else:
+            send_to_arduino("RGB=255,0,0")  # 빨강
+
+# 모터 상태 업데이트
+def update_motor(humidity):
+    if motor_mode.get() == "자동":
+        if humidity < 40:
+            send_to_arduino("SERVO=0")  # 0도
+        else:
+            send_to_arduino("SERVO=90")  # 90도
+
+# 데이터 전송 함수
+def send_to_arduino(command):
+    if arduino:
+        try:
+            arduino.write((command + '\n').encode())
+            print(f"전송됨: {command}")
+        except Exception as e:
+            print(f"전송 오류: {e}")
+    else:
+        messagebox.showerror("연결 오류", "아두이노가 연결되지 않았습니다!")
+
+# 수동 모드: RGB LED 제어
+def set_rgb():
+    if lighting_mode.get() == "수동":
+        red = red_slider.get()
+        green = green_slider.get()
+        blue = blue_slider.get()
+        command = f"RGB={red},{green},{blue}"
+        send_to_arduino(command)
+
+# 수동 모드: 서보 모터 제어
+def set_servo():
+    if motor_mode.get() == "수동":
+        angle = servo_slider.get()
+        command = f"SERVO={angle}"
+        send_to_arduino(command)
+
+# 모드 전환
+def toggle_lighting_mode():
+    if lighting_mode.get() == "자동":
+        lighting_mode.set("수동")
+    else:
+        lighting_mode.set("자동")
+
+def toggle_motor_mode():
+    if motor_mode.get() == "자동":
+        motor_mode.set("수동")
+    else:
+        motor_mode.set("자동")
+
+# 실내 온도 및 습도, 조도 표시
+frame_sensor = tk.LabelFrame(root, text="센서 데이터", padx=10, pady=10)
+frame_sensor.pack(pady=10, fill="x")
+
+indoor_temp_value = tk.StringVar(value="N/A")
+indoor_humidity_value = tk.StringVar(value="N/A")
+brightness_value = tk.StringVar(value="N/A")
+
+tk.Label(frame_sensor, text="실내 온도:").grid(row=0, column=0, sticky="w", padx=10)
+tk.Label(frame_sensor, textvariable=indoor_temp_value).grid(row=0, column=1, sticky="w")
+
+tk.Label(frame_sensor, text="실내 습도:").grid(row=1, column=0, sticky="w", padx=10)
+tk.Label(frame_sensor, textvariable=indoor_humidity_value).grid(row=1, column=1, sticky="w")
+
+tk.Label(frame_sensor, text="조도:").grid(row=2, column=0, sticky="w", padx=10)
+tk.Label(frame_sensor, textvariable=brightness_value).grid(row=2, column=1, sticky="w")
+
+# 조명 제어
+frame_rgb = tk.LabelFrame(root, text="조명 제어 (RGB LED)", padx=10, pady=10)
+frame_rgb.pack(pady=10, fill="x")
+
+tk.Label(frame_rgb, text="모드:").grid(row=0, column=0, sticky="w", padx=10)
+tk.Label(frame_rgb, textvariable=lighting_mode).grid(row=0, column=1, sticky="w")
+tk.Button(frame_rgb, text="모드 전환", command=toggle_lighting_mode).grid(row=0, column=2)
+
+tk.Label(frame_rgb, text="RED:").grid(row=1, column=0)
+red_slider = tk.Scale(frame_rgb, from_=0, to=255, orient="horizontal")
+red_slider.grid(row=1, column=1)
+
+tk.Label(frame_rgb, text="GREEN:").grid(row=2, column=0)
+green_slider = tk.Scale(frame_rgb, from_=0, to=255, orient="horizontal")
+green_slider.grid(row=2, column=1)
+
+tk.Label(frame_rgb, text="BLUE:").grid(row=3, column=0)
+blue_slider = tk.Scale(frame_rgb, from_=0, to=255, orient="horizontal")
+blue_slider.grid(row=3, column=1)
+
+tk.Button(frame_rgb, text="설정", command=set_rgb).grid(row=4, column=0, columnspan=2, pady=10)
+
+# 모터 제어
+frame_servo = tk.LabelFrame(root, text="창문 제어 (서보 모터)", padx=10, pady=10)
+frame_servo.pack(pady=10, fill="x")
+
+tk.Label(frame_servo, text="모드:").grid(row=0, column=0, sticky="w", padx=10)
+tk.Label(frame_servo, textvariable=motor_mode).grid(row=0, column=1, sticky="w")
+tk.Button(frame_servo, text="모드 전환", command=toggle_motor_mode).grid(row=0, column=2)
+
+servo_slider = tk.Scale(frame_servo, from_=0, to=180, orient="horizontal")
+servo_slider.grid(row=1, column=0, columnspan=2)
+tk.Button(frame_servo, text="설정", command=set_servo).grid(row=2, column=0, columnspan=2, pady=10)
+
+# 센서 데이터 읽기 및 요청 쓰레드 시작
+if arduino:
+    threading.Thread(target=read_from_arduino, daemon=True).start()
+    threading.Thread(target=request_sensor_data, daemon=True).start()
+
+# GUI 실행
+root.mainloop()
