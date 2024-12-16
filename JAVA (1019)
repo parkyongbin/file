@@ -1,4 +1,4 @@
-package sec02.exam02;
+package sec03.exam03;
 
 public class StudentExamole {
     public static void main(String[] args) {
